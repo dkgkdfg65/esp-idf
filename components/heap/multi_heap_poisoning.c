@@ -94,8 +94,13 @@ static poison_head_t *verify_allocated_region(void *data, bool print_errors)
     /* check if the beginning of the data was overwritten */
     if (head->head_canary != HEAD_CANARY_PATTERN) {
         if (print_errors) {
+#ifdef CONFIG_HEAP_TASK_TRACKING
+            MULTI_HEAP_STDERR_PRINTF("CORRUPT HEAP: Bad head at %p owner %p. Expected 0x%08x got 0x%08x\n", &head->head_canary,
+                   MULTI_HEAP_GET_BLOCK_OWNER(head), HEAD_CANARY_PATTERN, head->head_canary);
+#else
             MULTI_HEAP_STDERR_PRINTF("CORRUPT HEAP: Bad head at %p. Expected 0x%08x got 0x%08x\n", &head->head_canary,
                    HEAD_CANARY_PATTERN, head->head_canary);
+#endif
         }
         return NULL;
     }
@@ -110,8 +115,13 @@ static poison_head_t *verify_allocated_region(void *data, bool print_errors)
     }
     if (canary != TAIL_CANARY_PATTERN) {
         if (print_errors) {
+#ifdef CONFIG_HEAP_TASK_TRACKING
+            MULTI_HEAP_STDERR_PRINTF("CORRUPT HEAP: Bad tail at %p owner %p. Expected 0x%08x got 0x%08x\n", &tail->tail_canary,
+                   MULTI_HEAP_GET_BLOCK_OWNER(head), TAIL_CANARY_PATTERN, canary);
+#else
             MULTI_HEAP_STDERR_PRINTF("CORRUPT HEAP: Bad tail at %p. Expected 0x%08x got 0x%08x\n", &tail->tail_canary,
                    TAIL_CANARY_PATTERN, canary);
+#endif
         }
         return NULL;
     }
@@ -129,7 +139,7 @@ static poison_head_t *verify_allocated_region(void *data, bool print_errors)
 
    Returns true if verification checks out.
 */
-static bool verify_fill_pattern(void *data, size_t size, bool print_errors, bool expect_free, bool swap_pattern)
+static bool verify_fill_pattern(poison_head_t* head, void *data, size_t size, bool print_errors, bool expect_free, bool swap_pattern)
 {
     const uint32_t FREE_FILL_WORD = (FREE_FILL_PATTERN << 24) | (FREE_FILL_PATTERN << 16) | (FREE_FILL_PATTERN << 8) | FREE_FILL_PATTERN;
     const uint32_t MALLOC_FILL_WORD = (MALLOC_FILL_PATTERN << 24) | (MALLOC_FILL_PATTERN << 16) | (MALLOC_FILL_PATTERN << 8) | MALLOC_FILL_PATTERN;
@@ -144,7 +154,12 @@ static bool verify_fill_pattern(void *data, size_t size, bool print_errors, bool
         while (size >= 4) {
             if (*p != EXPECT_WORD) {
                 if (print_errors) {
+#ifdef CONFIG_HEAP_TASK_TRACKING
+                    MULTI_HEAP_STDERR_PRINTF("CORRUPT HEAP: Invalid data at %p owner %p. Expected 0x%08x got 0x%08x\n",
+                            p, MULTI_HEAP_GET_BLOCK_OWNER(head), EXPECT_WORD, *p);
+#else
                     MULTI_HEAP_STDERR_PRINTF("CORRUPT HEAP: Invalid data at %p. Expected 0x%08x got 0x%08x\n", p, EXPECT_WORD, *p);
+#endif
                 }
                 valid = false;
 #ifndef NDEBUG
@@ -167,7 +182,12 @@ static bool verify_fill_pattern(void *data, size_t size, bool print_errors, bool
     for (int i = 0; i < size; i++) {
         if (p[i] != (uint8_t)EXPECT_WORD) {
             if (print_errors) {
+#ifdef CONFIG_HEAP_TASK_TRACKING
+                MULTI_HEAP_STDERR_PRINTF("CORRUPT HEAP: Invalid data at %p owner %p. Expected 0x%02x got 0x%02x\n",
+                        p, MULTI_HEAP_GET_BLOCK_OWNER(head), (uint8_t)EXPECT_WORD, *p);
+#else
                 MULTI_HEAP_STDERR_PRINTF("CORRUPT HEAP: Invalid data at %p. Expected 0x%02x got 0x%02x\n", p, (uint8_t)EXPECT_WORD, *p);
+#endif
             }
             valid = false;
 #ifndef NDEBUG
@@ -198,7 +218,7 @@ void *multi_heap_malloc(multi_heap_handle_t heap, size_t size)
         data = poison_allocated_region(head, size);
 #ifdef SLOW
         /* check everything we got back is FREE_FILL_PATTERN & swap for MALLOC_FILL_PATTERN */
-        bool ret = verify_fill_pattern(data, size, true, true, true);
+        bool ret = verify_fill_pattern(head, data, size, true, true, true);
         assert( ret );
 #endif
     }
@@ -355,7 +375,8 @@ bool multi_heap_internal_check_block_poisoning(void *start, size_t size, bool is
 {
     if (is_free) {
 #ifdef SLOW
-        return verify_fill_pattern(start, size, print_errors, true, false);
+        poison_head_t *head = (poison_head_t *)((intptr_t)start - sizeof(poison_head_t));
+        return verify_fill_pattern(head, start, size, print_errors, true, false);
 #else
         return true; /* can only verify empty blocks in SLOW mode */
 #endif
@@ -366,8 +387,13 @@ bool multi_heap_internal_check_block_poisoning(void *start, size_t size, bool is
             /* block can be bigger than alloc_size, for reasons of alignment & fragmentation,
                but block can never be smaller than head->alloc_size... */
             if (print_errors) {
+#ifdef CONFIG_HEAP_TASK_TRACKING
+                MULTI_HEAP_STDERR_PRINTF("CORRUPT HEAP: Size at %p owner %p expected <=0x%08x got 0x%08x\n", &head->alloc_size,
+                       MULTI_HEAP_GET_BLOCK_OWNER(head), size - POISON_OVERHEAD, head->alloc_size);
+#else
                 MULTI_HEAP_STDERR_PRINTF("CORRUPT HEAP: Size at %p expected <=0x%08x got 0x%08x\n", &head->alloc_size,
                        size - POISON_OVERHEAD, head->alloc_size);
+#endif
             }
             return false;
         }
