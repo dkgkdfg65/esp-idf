@@ -17,6 +17,11 @@
 #include <stdint.h>
 #include <esp_err.h>
 
+#ifdef CONFIG_HEAP_TASK_TRACKING
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -43,6 +48,10 @@ typedef struct {
     size_t size;     ///< Size of the allocation
     void *alloced_by[CONFIG_HEAP_TRACING_STACK_DEPTH]; ///< Call stack of the caller which allocated the memory.
     void *freed_by[CONFIG_HEAP_TRACING_STACK_DEPTH];   ///< Call stack of the caller which freed the memory (all zero if not freed.)
+#ifdef CONFIG_HEAP_TASK_TRACKING
+    TaskHandle_t alloced_task;  ///< Task which allocated the memory
+    TaskHandle_t freed_task;  ///< Task which freed the memory
+#endif
 } heap_trace_record_t;
 
 /**

@@ -26,6 +26,7 @@
 #include "soc/soc_memory_layout.h"
 
 #include "heap_private.h"
+#include "multi_heap_platform.h"
 
 #define STACK_DEPTH CONFIG_HEAP_TRACING_STACK_DEPTH
 
@@ -142,50 +143,59 @@ esp_err_t heap_trace_get(size_t index, heap_trace_record_t *record)
 void heap_trace_dump(void)
 {
 #ifndef CONFIG_HEAP_TRACING
-    printf("no data, heap tracing is disabled.\n");
+    MULTI_HEAP_PRINTF("no data, heap tracing is disabled.\n");
     return;
 #endif
     size_t delta_size = 0;
     size_t delta_allocs = 0;
-    printf("%u allocations trace (%u entry buffer)\n",
+    MULTI_HEAP_PRINTF("%u allocations trace (%u entry buffer)\n",
            count, total_records);
     size_t start_count = count;
     for (int i = 0; i < count; i++) {
         heap_trace_record_t *rec = &buffer[i];
 
         if (rec->address != NULL) {
-            printf("%d bytes (@ %p) allocated CPU %d ccount 0x%08x caller ",
+#ifdef CONFIG_HEAP_TASK_TRACKING
+            MULTI_HEAP_PRINTF("%d bytes (@ %p) allocated CPU %d task %p ccount 0x%08x caller ",
+                   rec->size, rec->address, rec->ccount & 1, rec->alloced_task, rec->ccount & ~3);
+#else
+            MULTI_HEAP_PRINTF("%d bytes (@ %p) allocated CPU %d ccount 0x%08x caller ",
                    rec->size, rec->address, rec->ccount & 1, rec->ccount & ~3);
+#endif
             for (int j = 0; j < STACK_DEPTH && rec->alloced_by[j] != 0; j++) {
-                printf("%p%s", rec->alloced_by[j],
+                MULTI_HEAP_PRINTF("%p%s", rec->alloced_by[j],
                        (j < STACK_DEPTH - 1) ? ":" : "");
             }
 
             if (mode != HEAP_TRACE_ALL || STACK_DEPTH == 0 || rec->freed_by[0] == NULL) {
                 delta_size += rec->size;
                 delta_allocs++;
-                printf("\n");
+                MULTI_HEAP_PRINTF("\n");
             } else {
-                printf("\nfreed by ");
+#ifdef CONFIG_HEAP_TASK_TRACKING
+                MULTI_HEAP_PRINTF("\nfreed task %p by ", rec->freed_task);
+#else
+                MULTI_HEAP_PRINTF("\nfreed by ");
+#endif
                 for (int j = 0; j < STACK_DEPTH; j++) {
-                    printf("%p%s", rec->freed_by[j],
+                    MULTI_HEAP_PRINTF("%p%s", rec->freed_by[j],
                            (j < STACK_DEPTH - 1) ? ":" : "\n");
                 }
             }
         }
     }
     if (mode == HEAP_TRACE_ALL) {
-        printf("%u bytes alive in trace (%u/%u allocations)\n",
+        MULTI_HEAP_PRINTF("%u bytes alive in trace (%u/%u allocations)\n",
                delta_size, delta_allocs, heap_trace_get_count());
     } else {
-        printf("%u bytes 'leaked' in trace (%u allocations)\n", delta_size, delta_allocs);
+        MULTI_HEAP_PRINTF("%u bytes 'leaked' in trace (%u allocations)\n", delta_size, delta_allocs);
     }
-    printf("total allocations %u total frees %u\n", total_allocations, total_frees);
+    MULTI_HEAP_PRINTF("total allocations %u total frees %u\n", total_allocations, total_frees);
     if (start_count != count) { // only a problem if trace isn't stopped before dumping
-        printf("(NB: New entries were traced while dumping, so trace dump may have duplicate entries.)\n");
+        MULTI_HEAP_PRINTF("(NB: New entries were traced while dumping, so trace dump may have duplicate entries.)\n");
     }
     if (has_overflowed) {
-        printf("(NB: Buffer has overflowed, so trace data is incomplete.)\n");
+        MULTI_HEAP_PRINTF("(NB: Buffer has overflowed, so trace data is incomplete.)\n");
     }
 }
 
@@ -208,6 +218,9 @@ static IRAM_ATTR void record_allocation(const heap_trace_record_t *record)
         }
         // Copy new record into place
         memcpy(&buffer[count], record, sizeof(heap_trace_record_t));
+#ifdef CONFIG_HEAP_TASK_TRACKING
+        buffer[count].alloced_task = xTaskGetCurrentTaskHandle();
+#endif
         count++;
         total_allocations++;
     }
@@ -238,6 +251,9 @@ static IRAM_ATTR void record_free(void *p, void **callers)
         if (i >= 0) {
             if (mode == HEAP_TRACE_ALL) {
                 memcpy(buffer[i].freed_by, callers, sizeof(void *) * STACK_DEPTH);
+#ifdef CONFIG_HEAP_TASK_TRACKING
+                buffer[i].freed_task = xTaskGetCurrentTaskHandle();
+#endif
             } else { // HEAP_TRACE_LEAKS
                 // Leak trace mode, once an allocation is freed we remove it from the list
                 remove_record(i);
@@ -320,7 +336,6 @@ void *__real_heap_caps_realloc_default( void *ptr, size_t size );
 /* trace any 'malloc' event */
 static IRAM_ATTR __attribute__((noinline)) void *trace_malloc(size_t size, uint32_t caps, trace_malloc_mode_t mode)
 {
-    uint32_t ccount = get_ccount();
     void *p;
     if ( mode == TRACE_MALLOC_CAPS ) {
         p = __real_heap_caps_malloc(size, caps);
@@ -329,6 +344,7 @@ static IRAM_ATTR __attribute__((noinline)) void *trace_malloc(size_t size, uint3
     }
 
     if (tracing && p != NULL) {
+        uint32_t ccount = get_ccount();
         heap_trace_record_t rec = {
             .address = p,
             .ccount = ccount,
