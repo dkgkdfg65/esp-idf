@@ -62,7 +62,7 @@ void spi_flash_op_unlock()
 }
 /*
  If you're going to modify this, keep in mind that while the flash caches of the pro and app
- cpu are separate, the psram cache is *not*. If one of the CPUs returns from a flash routine 
+ cpu are separate, the psram cache is *not*. If one of the CPUs returns from a flash routine
  with its cache enabled but the other CPUs cache is not enabled yet, you will have problems
  when accessing psram from the former CPU.
 */
@@ -112,8 +112,8 @@ void IRAM_ATTR spi_flash_disable_interrupts_caches_and_other_cpu()
     } else {
         // Temporarily raise current task priority to prevent a deadlock while
         // waiting for IPC task to start on the other CPU
-        int old_prio = uxTaskPriorityGet(NULL);
-        vTaskPrioritySet(NULL, configMAX_PRIORITIES - 1);
+        prvTaskSavedPriority_t SavedPriority;
+        prvTaskPriorityRaise(&SavedPriority, configMAX_PRIORITIES - 1);
         // Signal to the spi_flash_op_block_task on the other CPU that we need it to
         // disable cache there and block other tasks from executing.
         s_flash_op_can_start = false;
@@ -126,14 +126,14 @@ void IRAM_ATTR spi_flash_disable_interrupts_caches_and_other_cpu()
         // Disable scheduler on the current CPU
         vTaskSuspendAll();
         // Can now set the priority back to the normal one
-        vTaskPrioritySet(NULL, old_prio);
+        prvTaskPriorityRestore(&SavedPriority);
         // This is guaranteed to run on CPU <cpuid> because the other CPU is now
         // occupied by highest priority task
         assert(xPortGetCoreID() == cpuid);
     }
     // Kill interrupts that aren't located in IRAM
     esp_intr_noniram_disable();
-    // This CPU executes this routine, with non-IRAM interrupts and the scheduler 
+    // This CPU executes this routine, with non-IRAM interrupts and the scheduler
     // disabled. The other CPU is spinning in the spi_flash_op_block_func task, also
     // with non-iram interrupts and the scheduler disabled. None of these CPUs will
     // touch external RAM or flash this way, so we can safely disable caches.
